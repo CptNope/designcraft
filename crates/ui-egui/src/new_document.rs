@@ -839,7 +839,7 @@ pub(crate) fn body(app: &mut DesignApp, ui: &mut Ui, d: &mut Dialog, width: f32,
     let mut create = false;
     if width < TWO_PANES {
         // A small window: the details first, then the presets; the dialog body scrolls.
-        ui.set_max_width(DETAILS_W.max(width));
+        ui.set_max_width(DETAILS_W.min(width));
         details(app, ui, d);
         ui.add_space(14.0);
         tabs(app, ui, d);
