@@ -1502,7 +1502,11 @@ impl DesignApp {
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
         let presenting = self.ui.screen_mode == ScreenMode::Presentation;
-        if presenting || self.ui.hidden_panels != 0 {
+        // A dedicated phone layout avoids forcing desktop panels into a 360pt viewport.
+        let phone = cfg!(target_arch = "wasm32") && ctx.content_rect().width() < 760.0 && !presenting;
+        let mobile_key = egui::Id::new("designcraft-phone-view");
+        let mut mobile_view = ctx.data(|d| d.get_temp::<u8>(mobile_key)).unwrap_or(0);
+        if presenting || self.ui.hidden_panels != 0 || phone {
             panel_docking::cancel_gesture(self, &ctx);
         }
         canvas::begin_frame(&ctx);
@@ -1510,7 +1514,35 @@ impl DesignApp {
         if dbg {
             eprintln!("root start {:?}", ui.available_rect_before_wrap());
         }
-        if !presenting {
+        if phone {
+            egui::Panel::top("phone_app_bar")
+                .frame(egui::Frame::NONE.fill(t.panel))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("New").clicked() {
+                            let _ = self.run("app.newDocumentDialog", serde_json::json!({}));
+                        }
+                        if ui.button("Open").clicked() {
+                            let _ = self.run("app.openDialog", serde_json::json!({}));
+                        }
+                        if self.session.active().is_some() && ui.button("Save").clicked() {
+                            let _ = self.run("file.save", serde_json::json!({}));
+                        }
+                        if self.session.active().is_some() {
+                            ui.separator();
+                            for (tab, label) in [(0, "Canvas"), (1, "Pages"), (2, "Properties")] {
+                                if ui.selectable_label(mobile_view == tab, label).clicked() {
+                                    mobile_view = tab;
+                                }
+                            }
+                        }
+                    });
+                });
+            ctx.data_mut(|d| d.insert_temp(mobile_key, mobile_view));
+            if self.session.active().is_some() && mobile_view == 0 && self.ui.hidden_panels != 1 {
+                toolbar::show(self, ui);
+            }
+        } else if !presenting {
             chrome::app_bar(self, ui);
             if dbg {
                 eprintln!("after app bar {:?}", ui.available_rect_before_wrap());
@@ -1531,7 +1563,37 @@ impl DesignApp {
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.pasteboard)).show(ui, |ui| {
             if self.session.active().is_none() {
-                chrome::start_screen(self, ui);
+                if phone {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(24.0);
+                        ui.heading("DesignCraft");
+                        ui.label("Page layout for print and screen");
+                        ui.add_space(12.0);
+                        if ui.button("Create a document").clicked() {
+                            let _ = self.run("app.newDocumentDialog", serde_json::json!({}));
+                        }
+                        if ui.button("Open sample magazine").clicked() {
+                            let _ = self.run("file.newSample", serde_json::json!({}));
+                        }
+                    });
+                } else {
+                    chrome::start_screen(self, ui);
+                }
+                return;
+            }
+            if phone {
+                if mobile_view == 1 {
+                    panels::pages::show(self, ui);
+                } else if mobile_view == 2 {
+                    egui::ScrollArea::vertical().id_salt("mobile-properties")
+                        .auto_shrink([false, false]).show(ui, |ui| {
+                            ui.set_max_width(ui.available_width());
+                            panels::properties::show(self, ui);
+                        });
+                } else {
+                    self.switch_pane(0);
+                    canvas::show(self, ui);
+                }
                 return;
             }
             if !presenting {
@@ -1619,7 +1681,7 @@ impl DesignApp {
             self.switch_pane(self.focus_pane);
         }
         // Tab, Shift+Tab and Presentation hide the floating panels with the docked ones.
-        if !presenting && self.ui.hidden_panels == 0 {
+        if !presenting && !phone && self.ui.hidden_panels == 0 {
             dock::flyout(self, &ctx);
             dock::floating(self, &ctx);
         }
